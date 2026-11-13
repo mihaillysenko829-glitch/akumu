@@ -2,8 +2,8 @@ const CACHE_NAME = 'akumu-v1';
 const ASSETS = [
   '/',
   '/index.html',
-  '/settings.html',
-  '/manifest.json'
+  '/manifest.json',
+  '/icon.svg'
 ];
 
 self.addEventListener('install', e => {
