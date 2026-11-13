@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#9E9E9E">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.json">
+<title>Акуму</title>
+<style>
+:root{color-scheme:dark;--bg:#000;--ink:#f4eef7;--mut:#a398ae}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:#000;color:var(--ink);font:16px/1.4 ui-rounded,"SF Pro Rounded",Nunito,system-ui,sans-serif;overflow:hidden;touch-action:none;-webkit-tap-highlight-color:transparent}
+body{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:env(safe-area-inset-top,0) 16px env(safe-area-inset-bottom,0)}
+
+/* Круглый экран — как на твоей плате ESP32 */
+#scr{
+  width:min(92vw, 92vh, 480px);
+  aspect-ratio:1;
+  border-radius:50%;
+  border:6px solid #8b8b96;
+  box-shadow:0 0 0 2px #3a3a42, 0 0 40px rgba(158,158,158,0.15);
+  overflow:hidden;
+  background:#000;
+  position:relative;
+}
+canvas{width:100%;height:100%;display:block;touch-action:none}
+
+/* Кнопка настроек — маленькая шестерёнка в правом верхнем углу круга */
+#gear{
+  position:absolute;top:12px;right:12px;
+  width:36px;height:36px;border-radius:50%;
+  background:rgba(255,255,255,0.12);
+  border:1px solid rgba(255,255,255,0.2);
+  color:#fff;font-size:18px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  backdrop-filter:blur(6px);
+  transition:opacity .3s;
+  opacity:0.5;
+  z-index:10;
+}
+#gear:active{transform:scale(.92)}
+#scr:hover #gear, #gear:focus{opacity:1}
+
+/* Подсказка снизу */
+#hint{
+  color:var(--mut);font-size:13px;text-align:center;
+  max-width:320px;opacity:.7;
+}
+
+/* Плавающая кнопка микрофона */
+#mic{
+  width:64px;height:64px;border-radius:50%;
+  background:linear-gradient(135deg,#9E9E9E,#616161);
+  border:2px solid rgba(255,255,255,0.25);
+  color:#fff;font-size:24px;cursor:pointer;
+  box-shadow:0 4px 20px rgba(0,0,0,0.5);
+  transition:transform .15s;
+}
+#mic:active{transform:scale(.92)}
+#mic.listening{
+  background:linear-gradient(135deg,#ff4d5e,#c62828);
+  animation:pulse 1.2s infinite;
+}
+@keyframes pulse{
+  0%,100%{box-shadow:0 0 0 0 rgba(255,77,94,.6)}
+  50%{box-shadow:0 0 0 16px rgba(255,77,94,0)}
+}
+
+/* Всплывающая подсказка с распознанной командой */
+#toast{
+  position:fixed;bottom:100px;left:50%;transform:translateX(-50%);
+  background:rgba(30,30,30,0.92);color:#fff;
+  padding:10px 18px;border-radius:20px;
+  font-size:14px;opacity:0;pointer-events:none;
+  transition:opacity .3s;
+  max-width:80vw;text-align:center;
+  backdrop-filter:blur(8px);
+}
+#toast.show{opacity:1}
+</style></head><body>
+
+<div id="scr">
+  <button id="gear" aria-label="Настройки" onclick="location.href='settings.html'">⚙</button>
+  <canvas id="c" aria-label="Акуму"></canvas>
+</div>
+
+<div id="hint">Води пальцем • Тап — подпрыгнет • Держи микрофон для команды</div>
+
+<button id="mic" aria-label="Голосовая команда">🎤</button>
+
+<div id="toast"></div>
+
+<script>
+// === РЕГИСТРАЦИЯ SERVICE WORKER ===
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('/sw.js').catch(()=>{});
+}
+
+// === ВЕСЬ КОД АКУМУ ИЗ ТВОЕЙ ВЕРСИИ (без UI-кнопок) ===
+const FACES={"calm":{"eyes":[{"o":[[-0.318,-0.412],[-0.272,-0.388],[-0.242,-0.347],[-0.22,-0.3],[-0.207,-0.25],[-0.196,-0.2],[-0.195,-0.149],[-0.193,-0.098],[-0.196,-0.047],[-0.201,0.004],[-0.209,0.055],[-0.223,0.104],[-0.247,0.15],[-0.28,0.189],[-0.329,0.206],[-0.375,0.183],[-0.403,0.14],[-0.423,0.093],[-0.439,0.044],[-0.45,-0.006],[-0.455,-0.057],[-0.456,-0.108],[-0.455,-0.16],[-0.449,-0.211],[-0.438,-0.261],[-0.422,-0.31],[-0.4,-0.356],[-0.367,-0.395]],"p":[[-0.318,-0.285],[-0.292,-0.26],[-0.284,-0.224],[-0.277,-0.188],[-0.278,-0.151],[-0.278,-0.114],[-0.283,-0.077],[-0.288,-0.041],[-0.315,-0.017],[-0.339,-0.042],[-0.348,-0.077],[-0.355,-0.114],[-0.357,-0.15],[-0.358,-0.187],[-0.354,-0.224],[-0.344,-0.259]],"has":1},{"o":[[0.318,-0.412],[0.367,-0.395],[0.4,-0.356],[0.422,-0.31],[0.438,-0.261],[0.449,-0.211],[0.455,-0.16],[0.456,-0.109],[0.455,-0.057],[0.45,-0.006],[0.439,0.044],[0.423,0.093],[0.403,0.14],[0.375,0.183],[0.329,0.206],[0.281,0.189],[0.247,0.15],[0.223,0.104],[0.209,0.055],[0.201,0.004],[0.196,-0.047],[0.193,-0.098],[0.195,-0.149],[0.196,-0.2],[0.207,-0.251],[0.22,-0.3],[0.242,-0.347],[0.272,-0.388]],"p":[[0.318,-0.285],[0.344,-0.259],[0.354,-0.224],[0.358,-0.188],[0.357,-0.151],[0.355,-0.114],[0.348,-0.078],[0.339,-0.043],[0.314,-0.017],[0.288,-0.042],[0.283,-0.078],[0.278,-0.115],[0.278,-0.151],[0.277,-0.188],[0.284,-0.224],[0.292,-0.26]],"has":1}],"mouth":[[-0.474,0.379],[-0.466,0.413],[-0.456,0.446],[-0.443,0.477],[-0.418,0.501],[-0.387,0.497],[-0.355,0.483],[-0.323,0.471],[-0.29,0.461],[-0.258,0.468],[-0.233,0.491],[-0.206,0.512],[-0.175,0.516],[-0.142,0.509],[-0.108,0.507],[-0.077,0.491],[-0.047,0.474],[-0.017,0.458],[0.017,0.458],[0.047,0.474],[0.077,0.491],[0.108,0.507],[0.142,0.509],[0.175,0.516],[0.206,0.512],[0.233,0.491],[0.258,0.468],[0.29,0.461],[0.323,0.471],[0.355,0.483],[0.387,0.497],[0.418,0.501],[0.443,0.477],[0.456,0.446],[0.466,0.413],[0.474,0.379]],"mw":0.042,"hatch":[]},"joy":{"eyes":[{"o":[[-0.472,-0.259],[-0.408,-0.249],[-0.349,-0.225],[-0.294,-0.19],[-0.247,-0.146],[-0.207,-0.096],[-0.174,-0.041],[-0.148,0.017],[-0.144,0.075],[-0.171,0.088],[-0.229,0.061],[-0.286,0.03],[-0.347,0.009],[-0.41,-0.004],[-0.474,-0.004],[-0.538,0.003],[-0.6,0.021],[-0.658,0.049],[-0.713,0.083],[-0.767,0.117],[-0.792,0.094],[-0.776,0.033],[-0.754,-0.027],[-0.725,-0.084],[-0.687,-0.135],[-0.644,-0.182],[-0.594,-0.221],[-0.535,-0.247]],"p":[[-0.469,-0.049],[-0.469,-0.049],[-0.469,-0.049],[-0.469,-0.049],[-0.469,-0.049],[-0.469,-0.049],[-0.469,-0.049],[-0.469,-0.049],[-0.469,-0.049],[-0.469,-0.049],[-0.469,-0.049],[-0.469,-0.049],[-0.469,-0.049],[-0.469,-0.049],[-0.469,-0.049],[-0.469,-0.049]],"has":0},{"o":[[0.472,-0.259],[0.532,-0.247],[0.589,-0.223],[0.639,-0.187],[0.681,-0.142],[0.718,-0.093],[0.747,-0.039],[0.77,0.018],[0.788,0.077],[0.758,0.112],[0.706,0.079],[0.654,0.047],[0.598,0.021],[0.539,0.003],[0.478,-0.004],[0.416,-0.004],[0.356,0.007],[0.297,0.026],[0.242,0.054],[0.187,0.081],[0.145,0.061],[0.155,0.001],[0.182,-0.055],[0.215,-0.106],[0.255,-0.153],[0.301,-0.194],[0.354,-0.227],[0.411,-0.249]],"p":[[0.469,-0.049],[0.469,-0.049],[0.469,-0.049],[0.469,-0.049],[0.469,-0.049],[0.469,-0.049],[0.469,-0.049],[0.469,-0.049],[0.469,-0.049],[0.469,-0.049],[0.469,-0.049],[0.469,-0.049],[0.469,-0.049],[0.469,-0.049],[0.469,-0.049],[0.469,-0.049]],"has":0}],"mouth":[[-0.303,0.294],[-0.292,0.313],[-0.281,0.332],[-0.268,0.35],[-0.255,0.368],[-0.24,0.385],[-0.219,0.388],[-0.198,0.381],[-0.177,0.372],[-0.159,0.359],[-0.141,0.347],[-0.121,0.337],[-0.101,0.327],[-0.08,0.324],[-0.059,0.332],[-0.042,0.346],[-0.026,0.361],[-0.008,0.373],[0.008,0.373],[0.026,0.361],[0.042,0.346],[0.059,0.332],[0.08,0.324],[0.101,0.327],[0.121,0.337],[0.141,0.347],[0.159,0.359],[0.177,0.372],[0.198,0.381],[0.219,0.388],[0.24,0.385],[0.255,0.368],[0.268,0.35],[0.281,0.332],[0.292,0.313],[0.303,0.294]],"mw":0.051,"hatch":[]},"sad":{"eyes":[{"o":[[-0.145,0.133],[-0.164,0.185],[-0.188,0.235],[-0.203,0.289],[-0.225,0.341],[-0.254,0.389],[-0.29,0.432],[-0.332,0.468],[-0.382,0.494],[-0.436,0.509],[-0.491,0.51],[-0.547,0.501],[-0.598,0.479],[-0.643,0.446],[-0.681,0.405],[-0.71,0.356],[-0.752,0.322],[-0.738,0.287],[-0.682,0.284],[-0.626,0.277],[-0.571,0.271],[-0.515,0.26],[-0.46,0.25],[-0.406,0.237],[-0.352,0.22],[-0.299,0.2],[-0.247,0.181],[-0.197,0.155]],"p":[[-0.234,0.212],[-0.233,0.278],[-0.258,0.338],[-0.318,0.358],[-0.384,0.354],[-0.448,0.368],[-0.514,0.362],[-0.578,0.379],[-0.639,0.397],[-0.673,0.349],[-0.616,0.317],[-0.553,0.302],[-0.488,0.286],[-0.423,0.272],[-0.36,0.254],[-0.297,0.232]],"has":1},{"o":[[0.145,0.133],[0.196,0.155],[0.245,0.18],[0.297,0.199],[0.349,0.219],[0.401,0.235],[0.455,0.248],[0.509,0.259],[0.564,0.269],[0.618,0.276],[0.673,0.283],[0.729,0.286],[0.745,0.327],[0.705,0.364],[0.675,0.411],[0.637,0.45],[0.592,0.482],[0.54,0.502],[0.486,0.51],[0.431,0.508],[0.378,0.492],[0.329,0.466],[0.288,0.429],[0.252,0.387],[0.224,0.339],[0.203,0.288],[0.188,0.235],[0.164,0.185]],"p":[[0.234,0.212],[0.296,0.231],[0.358,0.253],[0.42,0.271],[0.484,0.285],[0.547,0.3],[0.61,0.316],[0.668,0.346],[0.639,0.397],[0.576,0.379],[0.513,0.362],[0.448,0.368],[0.385,0.354],[0.32,0.358],[0.258,0.338],[0.233,0.277]],"has":1}],"mouth":[[-0.291,0.638],[-0.276,0.653],[-0.265,0.672],[-0.25,0.688],[-0.235,0.704],[-0.214,0.707],[-0.194,0.699],[-0.178,0.685],[-0.164,0.668],[-0.148,0.654],[-0.13,0.643],[-0.113,0.628],[-0.098,0.613],[-0.082,0.599],[-0.064,0.587],[-0.043,0.586],[-0.025,0.597],[-0.009,0.611],[0.009,0.611],[0.025,0.597],[0.043,0.586],[0.064,0.587],[0.082,0.599],[0.098,0.613],[0.113,0.628],[0.13,0.643],[0.148,0.654],[0.164,0.668],[0.178,0.685],[0.194,0.699],[0.214,0.707],[0.235,0.704],[0.25,0.688],[0.265,0.672],[0.276,0.653],[0.291,0.638]],"mw":0.052,"hatch":[]},"angry":{"eyes":[{"o":[[-0.595,-0.232],[-0.549,-0.198],[-0.506,-0.16],[-0.462,-0.123],[-0.419,-0.084],[-0.375,-0.047],[-0.332,-0.009],[-0.289,0.029],[-0.245,0.067],[-0.202,0.105],[-0.161,0.145],[-0.139,0.196],[-0.176,0.237],[-0.206,0.285],[-0.25,0.322],[-0.303,0.344],[-0.36,0.348],[-0.416,0.332],[-0.462,0.299],[-0.503,0.259],[-0.535,0.211],[-0.563,0.161],[-0.58,0.106],[-0.593,0.051],[-0.602,-0.006],[-0.606,-0.064],[-0.605,-0.121],[-0.608,-0.178]],"p":[[-0.396,-0.02],[-0.364,-0.002],[-0.336,0.024],[-0.309,0.048],[-0.281,0.073],[-0.257,0.101],[-0.262,0.138],[-0.273,0.174],[-0.296,0.202],[-0.332,0.209],[-0.364,0.19],[-0.383,0.158],[-0.396,0.123],[-0.403,0.087],[-0.41,0.05],[-0.411,0.013]],"has":1},{"o":[[0.595,-0.232],[0.608,-0.176],[0.605,-0.119],[0.606,-0.062],[0.601,-0.005],[0.593,0.052],[0.58,0.108],[0.562,0.162],[0.535,0.212],[0.502,0.259],[0.462,0.299],[0.415,0.333],[0.36,0.348],[0.303,0.344],[0.25,0.322],[0.207,0.286],[0.176,0.237],[0.14,0.194],[0.163,0.142],[0.205,0.103],[0.247,0.065],[0.291,0.028],[0.333,-0.01],[0.376,-0.048],[0.42,-0.085],[0.462,-0.123],[0.506,-0.16],[0.549,-0.198]],"p":[[0.396,-0.02],[0.411,0.013],[0.41,0.05],[0.403,0.087],[0.396,0.123],[0.383,0.158],[0.364,0.189],[0.332,0.209],[0.296,0.202],[0.273,0.173],[0.262,0.137],[0.257,0.101],[0.281,0.073],[0.309,0.048],[0.337,0.023],[0.364,-0.002]],"has":1}],"mouth":[[-0.441,0.461],[-0.427,0.491],[-0.412,0.521],[-0.395,0.55],[-0.375,0.577],[-0.346,0.579],[-0.316,0.564],[-0.288,0.547],[-0.259,0.53],[-0.229,0.52],[-0.199,0.532],[-0.175,0.556],[-0.152,0.579],[-0.124,0.591],[-0.094,0.579],[-0.07,0.555],[-0.043,0.537],[-0.015,0.518],[0.015,0.518],[0.043,0.537],[0.07,0.555],[0.094,0.579],[0.124,0.591],[0.152,0.579],[0.175,0.556],[0.199,0.532],[0.229,0.52],[0.259,0.53],[0.288,0.547],[0.316,0.564],[0.346,0.579],[0.375,0.577],[0.395,0.55],[0.412,0.521],[0.427,0.491],[0.441,0.461]],"mw":0.054,"hatch":[]},"surprise":{"eyes":[{"o":[[-0.335,-0.452],[-0.285,-0.429],[-0.254,-0.383],[-0.233,-0.331],[-0.216,-0.278],[-0.209,-0.223],[-0.203,-0.168],[-0.203,-0.112],[-0.206,-0.056],[-0.213,-0.001],[-0.223,0.054],[-0.241,0.106],[-0.265,0.157],[-0.3,0.2],[-0.352,0.219],[-0.402,0.194],[-0.434,0.149],[-0.456,0.098],[-0.47,0.044],[-0.479,-0.011],[-0.485,-0.066],[-0.485,-0.122],[-0.485,-0.177],[-0.473,-0.232],[-0.465,-0.287],[-0.449,-0.34],[-0.423,-0.389],[-0.388,-0.433]],"p":[[-0.335,-0.315],[-0.309,-0.283],[-0.299,-0.243],[-0.293,-0.202],[-0.294,-0.16],[-0.294,-0.119],[-0.3,-0.078],[-0.31,-0.037],[-0.339,-0.008],[-0.365,-0.04],[-0.376,-0.08],[-0.38,-0.122],[-0.382,-0.163],[-0.38,-0.205],[-0.375,-0.246],[-0.365,-0.286]],"has":1},{"o":[[0.335,-0.452],[0.388,-0.432],[0.423,-0.389],[0.449,-0.34],[0.465,-0.287],[0.473,-0.232],[0.485,-0.177],[0.485,-0.122],[0.485,-0.066],[0.479,-0.011],[0.47,0.044],[0.456,0.098],[0.434,0.149],[0.402,0.194],[0.352,0.219],[0.3,0.2],[0.265,0.157],[0.241,0.106],[0.223,0.054],[0.213,-0.001],[0.206,-0.056],[0.203,-0.112],[0.203,-0.168],[0.209,-0.223],[0.216,-0.278],[0.233,-0.331],[0.254,-0.383],[0.285,-0.429]],"p":[[0.335,-0.315],[0.365,-0.286],[0.375,-0.246],[0.38,-0.205],[0.382,-0.163],[0.38,-0.122],[0.376,-0.081],[0.365,-0.041],[0.339,-0.008],[0.31,-0.038],[0.3,-0.078],[0.294,-0.119],[0.294,-0.161],[0.293,-0.202],[0.299,-0.243],[0.309,-0.283]],"has":1}],"mouth":[[-0.291,0.379],[-0.286,0.402],[-0.278,0.425],[-0.272,0.448],[-0.261,0.469],[-0.24,0.473],[-0.218,0.464],[-0.198,0.452],[-0.178,0.438],[-0.158,0.424],[-0.141,0.408],[-0.12,0.398],[-0.1,0.407],[-0.085,0.426],[-0.068,0.443],[-0.053,0.462],[-0.033,0.475],[-0.01,0.47],[0.01,0.47],[0.033,0.475],[0.053,0.462],[0.068,0.443],[0.085,0.426],[0.1,0.407],[0.12,0.398],[0.141,0.408],[0.158,0.424],[0.178,0.438],[0.198,0.452],[0.218,0.464],[0.24,0.473],[0.261,0.469],[0.272,0.448],[0.278,0.425],[0.286,0.402],[0.291,0.379]],"mw":0.052,"hatch":[]},"sleep":{"eyes":[{"o":[[-0.212,0.064],[-0.185,0.089],[-0.207,0.129],[-0.237,0.165],[-0.273,0.197],[-0.312,0.224],[-0.354,0.246],[-0.399,0.26],[-0.444,0.273],[-0.491,0.276],[-0.538,0.269],[-0.585,0.262],[-0.629,0.244],[-0.671,0.223],[-0.709,0.194],[-0.742,0.161],[-0.757,0.122],[-0.724,0.104],[-0.677,0.113],[-0.63,0.121],[-0.583,0.126],[-0.536,0.125],[-0.488,0.126],[-0.441,0.122],[-0.395,0.114],[-0.348,0.105],[-0.302,0.094],[-0.257,0.079]],"p":[[-0.47,0.165],[-0.47,0.165],[-0.47,0.165],[-0.47,0.165],[-0.47,0.165],[-0.47,0.165],[-0.47,0.165],[-0.47,0.165],[-0.47,0.165],[-0.47,0.165],[-0.47,0.165],[-0.47,0.165],[-0.47,0.165],[-0.47,0.165],[-0.47,0.165],[-0.47,0.165]],"has":0},{"o":[[0.212,0.064],[0.256,0.079],[0.3,0.093],[0.345,0.105],[0.391,0.113],[0.436,0.122],[0.482,0.125],[0.529,0.126],[0.575,0.126],[0.621,0.122],[0.667,0.114],[0.713,0.106],[0.755,0.121],[0.74,0.163],[0.708,0.195],[0.671,0.223],[0.629,0.244],[0.586,0.261],[0.54,0.268],[0.495,0.275],[0.448,0.273],[0.404,0.261],[0.359,0.248],[0.318,0.227],[0.279,0.201],[0.244,0.171],[0.214,0.137],[0.189,0.097]],"p":[[0.47,0.165],[0.47,0.165],[0.47,0.165],[0.47,0.165],[0.47,0.165],[0.47,0.165],[0.47,0.165],[0.47,0.165],[0.47,0.165],[0.47,0.165],[0.47,0.165],[0.47,0.165],[0.47,0.165],[0.47,0.165],[0.47,0.165],[0.47,0.165]],"has":0}],"mouth":[[-0.154,0.425],[-0.145,0.43],[-0.136,0.436],[-0.129,0.444],[-0.122,0.452],[-0.113,0.458],[-0.107,0.466],[-0.097,0.47],[-0.086,0.471],[-0.076,0.47],[-0.066,0.467],[-0.056,0.461],[-0.048,0.455],[-0.039,0.449],[-0.031,0.443],[-0.022,0.437],[-0.013,0.431],[-0.005,0.424],[0.005,0.424],[0.013,0.431],[0.022,0.437],[0.031,0.443],[0.039,0.449],[0.048,0.455],[0.056,0.461],[0.066,0.467],[0.076,0.47],[0.086,0.471],[0.097,0.47],[0.107,0.466],[0.113,0.458],[0.122,0.452],[0.129,0.444],[0.136,0.436],[0.145,0.43],[0.154,0.425]],"mw":0.052,"hatch":[]},"love":{"eyes":[{"o":[[-0.464,-0.287],[-0.4,-0.276],[-0.34,-0.252],[-0.287,-0.216],[-0.239,-0.172],[-0.202,-0.12],[-0.169,-0.064],[-0.143,-0.006],[-0.137,0.053],[-0.181,0.056],[-0.237,0.024],[-0.295,-0.004],[-0.358,-0.021],[-0.421,-0.032],[-0.486,-0.034],[-0.55,-0.024],[-0.611,-0.003],[-0.67,0.024],[-0.723,0.061],[-0.776,0.096],[-0.798,0.059],[-0.78,-0.003],[-0.756,-0.063],[-0.725,-0.119],[-0.687,-0.17],[-0.64,-0.215],[-0.587,-0.252],[-0.528,-0.277]],"p":[[-0.47,-0.076],[-0.47,-0.076],[-0.47,-0.076],[-0.47,-0.076],[-0.47,-0.076],[-0.47,-0.076],[-0.47,-0.076],[-0.47,-0.076],[-0.47,-0.076],[-0.47,-0.076],[-0.47,-0.076],[-0.47,-0.076],[-0.47,-0.076],[-0.47,-0.076],[-0.47,-0.076],[-0.47,-0.076]],"has":0},{"o":[[0.464,-0.287],[0.526,-0.277],[0.584,-0.253],[0.636,-0.218],[0.682,-0.175],[0.721,-0.125],[0.751,-0.071],[0.776,-0.013],[0.795,0.047],[0.77,0.092],[0.718,0.057],[0.666,0.022],[0.609,-0.004],[0.549,-0.024],[0.487,-0.034],[0.425,-0.032],[0.363,-0.022],[0.302,-0.006],[0.245,0.02],[0.19,0.051],[0.137,0.045],[0.148,-0.017],[0.174,-0.074],[0.207,-0.127],[0.245,-0.177],[0.291,-0.219],[0.344,-0.253],[0.402,-0.277]],"p":[[0.47,-0.076],[0.47,-0.076],[0.47,-0.076],[0.47,-0.076],[0.47,-0.076],[0.47,-0.076],[0.47,-0.076],[0.47,-0.076],[0.47,-0.076],[0.47,-0.076],[0.47,-0.076],[0.47,-0.076],[0.47,-0.076],[0.47,-0.076],[0.47,-0.076],[0.47,-0.076]],"has":0}],"mouth":[[-0.293,0.276],[-0.278,0.29],[-0.266,0.307],[-0.251,0.322],[-0.239,0.34],[-0.226,0.356],[-0.207,0.363],[-0.187,0.358],[-0.169,0.348],[-0.151,0.336],[-0.131,0.328],[-0.112,0.322],[-0.094,0.31],[-0.076,0.299],[-0.057,0.298],[-0.039,0.309],[-0.024,0.323],[-0.009,0.338],[0.009,0.338],[0.024,0.323],[0.039,0.309],[0.057,0.298],[0.076,0.299],[0.094,0.31],[0.112,0.322],[0.131,0.328],[0.151,0.336],[0.169,0.348],[0.187,0.358],[0.207,0.363],[0.226,0.356],[0.239,0.34],[0.251,0.322],[0.266,0.307],[0.278,0.29],[0.293,0.276]],"mw":0.052,"hatch":[[-0.814,0.265,-0.645,0.16],[-0.716,0.278,-0.54,0.174],[-0.586,0.279,-0.434,0.193],[0.645,0.16,0.814,0.265],[0.54,0.174,0.716,0.278],[0.434,0.193,0.586,0.279]]},"scared":{"eyes":[{"o":[[-0.368,-0.574],[-0.298,-0.552],[-0.253,-0.494],[-0.222,-0.428],[-0.201,-0.358],[-0.19,-0.285],[-0.183,-0.212],[-0.183,-0.139],[-0.187,-0.066],[-0.194,0.007],[-0.208,0.079],[-0.229,0.15],[-0.257,0.217],[-0.305,0.273],[-0.371,0.303],[-0.438,0.276],[-0.486,0.221],[-0.518,0.155],[-0.539,0.084],[-0.553,0.012],[-0.56,-0.061],[-0.564,-0.134],[-0.56,-0.207],[-0.549,-0.28],[-0.533,-0.351],[-0.511,-0.421],[-0.481,-0.488],[-0.435,-0.546]],"p":[[-0.353,-0.398],[-0.316,-0.355],[-0.301,-0.299],[-0.294,-0.242],[-0.294,-0.184],[-0.295,-0.126],[-0.304,-0.069],[-0.316,-0.012],[-0.356,0.025],[-0.394,-0.017],[-0.41,-0.072],[-0.414,-0.13],[-0.42,-0.188],[-0.416,-0.246],[-0.41,-0.303],[-0.394,-0.359]],"has":1},{"o":[[0.368,-0.574],[0.435,-0.546],[0.481,-0.488],[0.511,-0.421],[0.533,-0.351],[0.549,-0.28],[0.56,-0.208],[0.564,-0.134],[0.56,-0.061],[0.553,0.012],[0.539,0.084],[0.518,0.154],[0.486,0.22],[0.439,0.276],[0.371,0.303],[0.304,0.273],[0.257,0.217],[0.228,0.149],[0.207,0.079],[0.194,0.007],[0.187,-0.066],[0.183,-0.139],[0.183,-0.212],[0.19,-0.285],[0.201,-0.358],[0.222,-0.428],[0.253,-0.494],[0.298,-0.552]],"p":[[0.353,-0.398],[0.395,-0.359],[0.41,-0.303],[0.416,-0.246],[0.42,-0.189],[0.414,-0.131],[0.41,-0.074],[0.395,-0.019],[0.357,0.024],[0.315,-0.014],[0.304,-0.07],[0.295,-0.127],[0.294,-0.184],[0.294,-0.242],[0.301,-0.299],[0.316,-0.354]],"has":1}],"mouth":[[-0.328,0.45],[-0.346,0.478],[-0.357,0.51],[-0.361,0.543],[-0.355,0.571],[-0.323,0.572],[-0.295,0.556],[-0.268,0.535],[-0.242,0.514],[-0.215,0.493],[-0.187,0.475],[-0.156,0.476],[-0.135,0.499],[-0.115,0.527],[-0.094,0.553],[-0.065,0.56],[-0.036,0.543],[-0.013,0.519],[0.013,0.519],[0.036,0.543],[0.065,0.56],[0.094,0.553],[0.115,0.527],[0.135,0.499],[0.156,0.476],[0.187,0.475],[0.215,0.493],[0.242,0.514],[0.268,0.535],[0.295,0.556],[0.323,0.572],[0.355,0.571],[0.361,0.543],[0.357,0.51],[0.346,0.478],[0.328,0.45]],"mw":0.06,"hatch":[]}};
+const SIGN={"s":[[[-0.929,-0.936],[-0.923,-0.96],[-0.916,-0.984],[-0.899,-1.004],[-0.878,-1.019],[-0.854,-1.026],[-0.83,-1.03],[-0.806,-1.025],[-0.788,-1.005],[-0.781,-0.981],[-0.781,-0.954],[-0.788,-0.929],[-0.797,-0.907],[-0.813,-0.886],[-0.831,-0.867],[-0.839,-0.843],[-0.836,-0.817],[-0.826,-0.794]],[[-1.07,-0.936],[-1.077,-0.923],[-1.075,-0.908],[-1.069,-0.896],[-1.064,-0.883],[-1.058,-0.87],[-1.051,-0.857],[-1.049,-0.843],[-1.042,-0.83],[-1.038,-0.817],[-1.032,-0.804],[-1.025,-0.792],[-1.019,-0.779],[-1.016,-0.765],[-1.009,-0.752],[-1.006,-0.739],[-1.0,-0.726],[-1.0,-0.711]]],"d":[[-0.805,-0.702,0.028],[-0.957,-0.625,0.028]],"w":0.045,"cx":-0.936,"cy":-0.872};let sg=0;
+const HEART={"s":[[-1.028,-0.704],[-1.049,-0.704],[-1.07,-0.718],[-1.088,-0.737],[-1.109,-0.751],[-1.128,-0.77],[-1.147,-0.789],[-1.161,-0.81],[-1.175,-0.831],[-1.175,-0.858],[-1.171,-0.883],[-1.152,-0.902],[-1.127,-0.907],[-1.102,-0.905],[-1.081,-0.891],[-1.06,-0.877],[-1.038,-0.865],[-1.021,-0.879],[-1.014,-0.903],[-1.003,-0.925],[-0.989,-0.946],[-0.97,-0.965],[-0.951,-0.984],[-0.928,-0.991],[-0.903,-0.986],[-0.888,-0.965],[-0.881,-0.941],[-0.881,-0.915],[-0.881,-0.888],[-0.889,-0.864],[-0.898,-0.841],[-0.907,-0.818],[-0.916,-0.795],[-0.923,-0.772],[-0.93,-0.748],[-0.943,-0.726],[-0.951,-0.703],[-0.958,-0.679],[-0.965,-0.655],[-0.979,-0.634]],"w":0.042,"cx":-1.011,"cy":-0.836};let hg=0;
+const ZZZ={"s":[[-0.407,-0.285],[-0.323,-0.285],[-0.258,-0.332],[-0.174,-0.332],[-0.099,-0.354],[-0.026,-0.38],[0.058,-0.38],[0.117,-0.327],[0.117,-0.243],[0.117,-0.159],[0.07,-0.095],[0.011,-0.035],[-0.026,0.033],[-0.073,0.098],[-0.073,0.181],[-0.092,0.258],[-0.121,0.33],[-0.061,0.382],[0.008,0.348],[0.087,0.335],[0.171,0.335],[0.255,0.335],[0.319,0.287],[0.403,0.287]],"w":0.277,"size":0.141,"origin":[0.632,-1.015]};let zz=0;
+const $=s=>document.querySelector(s),cv=$('#c'),ctx=cv.getContext('2d');
+function fit(){const w=cv.clientWidth*(devicePixelRatio||1);cv.width=cv.height=w;ctx.setTransform(w/466,0,0,w/466,0,0)}
+addEventListener('resize',fit);fit();
+const R=118;
+const LB={calm:'Спокойствие',joy:'Радость',sad:'Грусть',angry:'Злость',surprise:'Удивление',sleep:'Сон',love:'Любовь',scared:'Испуг'};
+const SP={calm:[1,0,1,[520,640]],joy:[2,0,0,[600,800,1000]],sad:[.5,0,1,[500,380]],angry:[1.6,.6,0,[300,260]],surprise:[1.2,0,1,[700,1100]],sleep:[.4,0,0,[400,330]],love:[1.6,0,0,[650,820,980]],scared:[2,1,1,[900,700,900]]};
+function mkT(f,sp,sh,bl,mf,gl){return{eo:f.eyes.map(e=>e.o.flat()),ep:f.eyes.map(e=>e.p.flat()),m:f.mouth.flat(),h:f.hatch&&f.hatch.length?f.hatch.flat():FACES.love.hatch.flat(),hb:f.hatch&&f.hatch.length?1:0,mw:f.mw,sp,sh,bl,mf:mf||0,gl:gl||0}}
+const T={};for(const n in LB)T[n]=mkT(FACES[n],SP[n][0],SP[n][1],SP[n][2]);
+const ctr=a=>{let x=0,y=0;a.forEach(p=>{x+=p[0];y+=p[1]});return[x/a.length,y/a.length]};
+const tfm=(a,f)=>{const c=ctr(a);return a.map(p=>f(p,c))};
+const scl=(a,sx,sy)=>tfm(a,(p,c)=>[c[0]+(p[0]-c[0])*sx,c[1]+(p[1]-c[1])*sy]);
+const rotp=(a,th)=>tfm(a,(p,c)=>{const dx=p[0]-c[0],dy=p[1]-c[1];return[c[0]+dx*Math.cos(th)-dy*Math.sin(th),c[1]+dx*Math.sin(th)+dy*Math.cos(th)]});
+SP.beg=[1.2,0,1,[700,900]];SP.sleepsad=[.35,0,0,[400,300]];SP.yawn=[.8,0,0,[500,400,300]];
+T.beg=mkT({eyes:FACES.calm.eyes.map(e=>({o:scl(e.o,1.2,1.2),p:scl(e.p,1.7,1.35)})),mouth:scl(FACES.sad.mouth,.55,.7).map(p=>[p[0],p[1]+.04]),mw:FACES.sad.mw,hatch:[]},1.2,0,1,0,1);
+T.sleepsad=mkT({eyes:FACES.sleep.eyes.map((e,i)=>({o:rotp(e.o,i?.22:-.22),p:e.p})),mouth:scl(FACES.sad.mouth,.7,.8),mw:FACES.sad.mw,hatch:[]},.35,0,0);
+T.yawn=mkT({eyes:FACES.joy.eyes,mouth:Array.from({length:36},(_,i)=>{const a=Math.PI+i/35*6.2832;return[.2*Math.cos(a),.5-.25*Math.sin(a)]}),mw:.03,hatch:[]},.8,0,0,1);
+const cl=o=>JSON.parse(JSON.stringify(o));
+let C=cl(T.calm);
+const rm=matchMedia('(prefers-reduced-motion:reduce)').matches?.35:1;
+let col='#9E9E9E',emo='calm',wx='none',umb=0,look=[0,0],lookT=[0,0],lm=0,acc=0,bobPh=0,shA=0,trT=-1e9,trD=.75,trF=null,hy=0,hv=0,sqk=0,drops=[],tr=[],bx=233,by=262,tx=233,ty=262,noBlink=false,mode='',modeT=0,bigV=0,bigKind='',lastAct=performance.now(),idleK=1,idlePh=0,autoEmo=false,sleeping=false,yawning=false,nextCall=0,rate=.14;
+const CALLS=[[880,1100],[700,950,1200],[1000,800,1000]];const WX={t:'0',d:'+1',n:'−1'};
+const rgb=h=>[1,3,5].map(i=>parseInt(h.substr(i,2),16));
+const mx=(h,c,t)=>'rgb('+rgb(h).map((v,i)=>Math.round(v+(c[i]-v)*t))+')';
+const dk=(t)=>mx(col,[20,0,15],t);
+let ac;function snd(f){try{ac=ac||new AudioContext();f.forEach((hz,i)=>{const o=ac.createOscillator(),g=ac.createGain(),s=ac.currentTime+i*.11;o.frequency.setValueAtTime(hz,s);o.frequency.exponentialRampToValueAtTime(hz*1.25,s+.09);g.gain.setValueAtTime(.0001,s);g.gain.exponentialRampToValueAtTime(.12,s+.02);g.gain.exponentialRampToValueAtTime(.0001,s+.1);o.connect(g).connect(ac.destination);o.start(s);o.stop(s+.12)})}catch(e){}}
+const toast=(t,d=2500)=>{const el=$('#toast');el.textContent=t;el.classList.add('show');clearTimeout(el._t);el._t=setTimeout(()=>el.classList.remove('show'),d)};
+function setEmo(n,q,d){emo=n;trF=cl(C);trT=performance.now();trD=d||.75;if(!q)snd(SP[n][3])}
+function touch(){lastAct=performance.now();idleK=1;if(autoEmo||sleeping){autoEmo=false;sleeping=false;idlePh=0;setEmo('calm',1,.6)}}
+function greet(){mode='greet';modeT=performance.now();setEmo('joy');toast('Привет!')}
+function showTime(){mode='time';bigKind='time';modeT=performance.now();setEmo('calm',1);toast('Сейчас…')}
+function showWeather(){mode='weather';bigKind='weather';modeT=performance.now();setEmo('calm',1);toast('Смотрю на небо…')}
+function goodNight(){mode='';yawning=true;setEmo('yawn',0,.9);toast('Спокойной ночи…');setTimeout(()=>{yawning=false;sleeping=true;setEmo('sleep',1,1.6)},2600)}
+function setWx(w){wx=w;drops=[];
+ if(w==='rain'){setEmo('scared');toast('Ой, дождик!');setTimeout(()=>{if(wx==='rain')setEmo('joy')},1900)}
+ else if(w==='snow'){setEmo('scared');toast('Снежок!');setTimeout(()=>{if(wx==='snow')setEmo('love')},1900)}
+ else if(w==='sun'){setEmo('joy');toast('Солнышко!')}
+ else{setEmo('calm');toast('Ясно')}}
+function mixA(d,a,b,e){for(let i=0;i<d.length;i++)d[i]=a[i]+(b[i]-a[i])*e}
+const KS=['hb','mw','sp','sh','bl','mf','gl'];
+function pts(a,fx){const n=a.length/2,P=[];for(let i=0;i<n;i++)P.push(fx(a[2*i],a[2*i+1]));return P}
+function smoothClosed(P){const n=P.length,m=(a,b)=>[(a[0]+b[0])/2,(a[1]+b[1])/2],s=m(P[0],P[1]);ctx.beginPath();ctx.moveTo(s[0],s[1]);for(let i=1;i<=n;i++){const c=P[i%n],q=m(c,P[(i+1)%n]);ctx.quadraticCurveTo(c[0],c[1],q[0],q[1])}ctx.closePath()}
+function smoothOpen(P){const n=P.length,m=(a,b)=>[(a[0]+b[0])/2,(a[1]+b[1])/2];ctx.beginPath();ctx.moveTo(P[0][0],P[0][1]);for(let i=1;i<n-1;i++){const q=m(P[i],P[i+1]);ctx.quadraticCurveTo(P[i][0],P[i][1],q[0],q[1])}ctx.lineTo(P[n-1][0],P[n-1][1])}
+function frame(ms){const t=ms/1000,dt=Math.min(.05,Math.max(.001,(ms-lm)/1000));lm=ms;const kk=r=>1-Math.exp(-dt*r),f=dt*60;
+ const now=performance.now(),idle=(now-lastAct)/1000*idleK;
+ if(mode==='greet'){const e=(now-modeT)/1000;if(e>3.6){mode='';setEmo('calm',1);tx=233;ty=262}else{const a=e/3.6*9.42;tx=233+80*Math.sin(a);ty=250+48*Math.sin(2*a)}}
+ else if(mode==='time'||mode==='weather'){const e=(now-modeT)/1000;if(e>(mode==='time'?5.5:7)){const w=mode;mode='';tx=233;ty=262;if(w==='weather'){setWx('sun');setTimeout(()=>{if(wx==='sun')setWx('none')},6000)}else setEmo('calm',1)}else{tx=233;ty=233}}
+ else if(!sleeping&&!yawning){const ph=idle<25?0:idle<40?1:idle<60?2:idle<80?3:4;
+  if(ph!==idlePh){idlePh=ph;if(ph){autoEmo=true;setEmo(['calm','calm','beg','sad','sleepsad'][ph],1,[0,1.2,2.4,2.2,3][ph])}else if(autoEmo){autoEmo=false;setEmo('calm',1,.9)}}
+  if((ph===1||ph===2)&&now>nextCall){nextCall=now+4200+Math.random()*1500;snd(CALLS[Math.floor(Math.random()*CALLS.length)]);hv=-8}}
+ bigV+=(((mode==='time'||mode==='weather')?1:0)-bigV)*kk(5);
+ const g0=T[emo];
+ const p=Math.min(1,(now-trT)/(trD*1000)),ez=p<.5?4*p*p*p:1-Math.pow(-2*p+2,3)/2,trb=p<1&&trD>.4?Math.sin(Math.PI*Math.min(1,Math.max(0,(p-.15)/.6))):0;
+ if(!trF)trF=cl(C);
+ for(let e=0;e<2;e++){mixA(C.eo[e],trF.eo[e],g0.eo[e],ez);mixA(C.ep[e],trF.ep[e],g0.ep[e],ez)}
+ mixA(C.m,trF.m,g0.m,ez);mixA(C.h,trF.h,g0.h,ez);
+ for(const k of KS)C[k]=trF[k]+(g0[k]-trF[k])*ez;
+ look[0]+=(lookT[0]-look[0])*kk(7);look[1]+=(lookT[1]-look[1])*kk(7);
+ umb+=((wx==='rain'?1:0)-umb)*kk(3.7);
+ hv+=.7*f;hy+=hv*f;if(hy>0){if(hv>4)sqk=.14;hy=0;hv=0}sqk*=Math.pow(.9,f);
+ bx+=(tx-bx)*kk(7.7);by+=(ty-by)*kk(7.7);
+ bobPh+=dt*1.3*C.sp;shA+=(((emo==='scared'||wx==='snow')?1:0)-shA)*kk(6);const cx=bx+Math.sin(t*45)*shA*2.5,cy=by+Math.sin(bobPh)*9*rm+hy;
+ ctx.clearRect(0,0,466,466);ctx.fillStyle='#000';ctx.fillRect(0,0,466,466);
+ if(wx==='sun'){const g=ctx.createRadialGradient(350,95,6,350,95,100);g.addColorStop(0,'rgba(255,220,120,.9)');g.addColorStop(1,'rgba(255,200,80,0)');ctx.fillStyle=g;ctx.fillRect(0,0,466,466);ctx.fillStyle='#ffd86b';ctx.beginPath();ctx.arc(350,95,22,0,6.3);ctx.fill()}
+ if(wx==='rain'||wx==='snow')for(let i=0;i<(wx==='rain'?4:2);i++)drops.push({x:Math.random()*466,y:-10,v:wx==='rain'?9+Math.random()*4:1.5+Math.random()});
+ drops=drops.filter(d=>{d.y+=d.v*f;if(wx==='snow')d.x+=Math.sin(d.y/20)*.6*f;
+  if(umb>.5){const dx=d.x-cx,r=88*umb;if(Math.abs(dx)<r&&d.y>cy-R+8-48*umb-Math.sqrt(r*r-dx*dx))return false}
+  return d.y<480});
+ for(const d of drops){if(wx==='snow'){ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(d.x,d.y,2.2,0,6.3);ctx.fill()}else{ctx.strokeStyle='rgba(140,200,255,.75)';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(d.x,d.y);ctx.lineTo(d.x-1.5,d.y-10);ctx.stroke()}}
+ acc+=dt;while(acc>=.0167){tr.push([cx,cy]);acc-=.0167}while(tr.length>30)tr.shift();
+ const n=tr.length,A=[],B=[];for(let i=0;i<n;i++){const p=tr[i],a=tr[Math.max(i-1,0)],c=tr[Math.min(i+1,n-1)],dx=c[0]-a[0],dy=c[1]-a[1],l=Math.hypot(dx,dy)||1,w=84*Math.pow(i/(n-1||1),1.2);A.push([p[0]-dy/l*w,p[1]+dx/l*w]);B.push([p[0]+dy/l*w,p[1]-dx/l*w])}
+ ctx.beginPath();A.forEach((p,i)=>ctx[i?'lineTo':'moveTo'](p[0],p[1]));B.reverse().forEach(p=>ctx.lineTo(p[0],p[1]));ctx.closePath();ctx.fillStyle=col;ctx.fill();
+ const S=1+bigV*1.15;ctx.save();ctx.translate(cx,cy);const sx=1+sqk*.6+Math.sin(t*2.6)*.02;ctx.scale(sx*S,S/sx*(1+C.mf*.07));
+ if(umb>.02){ctx.save();ctx.translate(0,-R+8);ctx.scale(umb,umb);ctx.strokeStyle=mx(col,[0,0,0],.3);ctx.lineWidth=5;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(0,-48);ctx.stroke();
+  ctx.fillStyle=col;ctx.beginPath();ctx.arc(0,-48,88,Math.PI,0);for(let i=0;i<4;i++)ctx.arc(66-i*44,-48,22,0,Math.PI);ctx.closePath();ctx.fill();ctx.strokeStyle=mx(col,[0,0,0],.3);ctx.lineWidth=3;ctx.stroke();ctx.restore()}
+ const g=ctx.createRadialGradient(-30,-36,8,0,0,R*1.05);g.addColorStop(0,mx(col,[255,255,255],.08));g.addColorStop(.7,col);g.addColorStop(1,mx(col,[0,0,0],.12));
+ ctx.beginPath();ctx.arc(0,0,R,0,6.2832);ctx.shadowColor=col;ctx.shadowBlur=26;ctx.fillStyle=g;ctx.fill();ctx.shadowBlur=0;
+ const ph0=t%3.9,bk=(noBlink||ph0>=.2)?1:1-.88*Math.sin(Math.PI*ph0/.2),bf=(1-(1-bk)*C.bl)*(1-.88*trb),ox=(look[0]+Math.sin(t*.8)*.1)*4,oy=(look[1]+Math.sin(t*1.1+1)*.08)*3;
+ ctx.lineJoin='round';ctx.lineCap='round';const fa=Math.max(0,1-bigV*1.4);ctx.globalAlpha=fa;
+ for(let e=0;e<2;e++){const o=C.eo[e];let cyE=0;for(let i=0;i<28;i++)cyE+=o[2*i+1];cyE/=28;
+  const fx=(x,y)=>[x*R+ox,(cyE+(y-cyE)*bf)*R+oy];
+  smoothClosed(pts(o,fx));ctx.fillStyle=dk(.45);ctx.fill();ctx.strokeStyle=dk(.62);ctx.lineWidth=2;ctx.stroke();
+  smoothClosed(pts(C.ep[e],fx));ctx.fillStyle=dk(.62);ctx.fill();if(C.gl>.02){const p=C.ep[e];let px=0,py=0;for(let i=0;i<16;i++){px+=p[2*i];py+=p[2*i+1]}px/=16;py/=16;ctx.save();ctx.globalAlpha=fa*C.gl;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc((px-.02)*R+ox,(cyE+(py-cyE)*bf-.04)*R+oy,.034*R,0,6.3);ctx.fill();ctx.beginPath();ctx.arc((px+.02)*R+ox,(cyE+(py-cyE)*bf+.03)*R+oy,.016*R,0,6.3);ctx.fill();ctx.restore()}}
+ ctx.strokeStyle=dk(.58);ctx.lineWidth=Math.max(1,C.mw*R);smoothOpen(pts(C.m,(x,y)=>[x*R+ox*.5,y*R+oy*.5]));ctx.stroke();if(C.mf>.02){ctx.closePath();ctx.save();ctx.globalAlpha=fa*C.mf;ctx.fillStyle=dk(.58);ctx.fill();ctx.restore()}
+ if(C.hb>.02){ctx.globalAlpha=C.hb*fa;ctx.lineWidth=3;for(let i=0;i<6;i++){const h=C.h;ctx.beginPath();ctx.moveTo(h[4*i]*R,h[4*i+1]*R);ctx.lineTo(h[4*i+2]*R,h[4*i+3]*R);ctx.stroke()}ctx.globalAlpha=1}
+ sg+=((emo==='surprise'?1:0)-sg)*kk(11);
+ zz+=(((emo==='sleep'||emo==='sleepsad')&&!yawning?1:0)-zz)*kk(3);
+ if(zz>.02){ctx.save();ctx.strokeStyle=mx(col,[255,255,255],.28);ctx.shadowColor=col;ctx.shadowBlur=8;ctx.lineCap='round';ctx.lineJoin='round';
+  for(let i=0;i<3;i++){const ph=(t/4.2+i/3)%1,a=Math.min(ph/.15,1)*Math.min((1-ph)/.35,1)*zz*(1-bigV),x=(.62+ph*.35+Math.sin(ph*6.3+i)*.05)*R,y=(-.78-ph*.85)*R,sz=(.22+ph*.2)*R;
+   ctx.globalAlpha=a;ctx.lineWidth=ZZZ.w*sz;ctx.beginPath();ZZZ.s.forEach((p,k)=>ctx[k?'lineTo':'moveTo'](x+p[0]*sz,y+p[1]*sz));ctx.stroke()}
+  ctx.restore()}
+ hg+=((emo==='love'?1:0)-hg)*kk(11);
+ if(hg>.02){ctx.save();ctx.globalAlpha=Math.min(1,hg*1.4)*(1-bigV);const pl=1+Math.sin(t*5)*.07*hg,pop=pl*(1+(1-hg)*.6);ctx.translate(HEART.cx*R,HEART.cy*R+Math.sin(t*2)*3*hg);ctx.scale(pop,pop);ctx.translate(-HEART.cx*R,-HEART.cy*R);
+  ctx.strokeStyle=mx(col,[255,255,255],.28);ctx.lineWidth=HEART.w*R;ctx.shadowColor=col;ctx.shadowBlur=10;ctx.beginPath();HEART.s.forEach((p,i)=>ctx[i?'lineTo':'moveTo'](p[0]*R,p[1]*R));ctx.stroke();ctx.restore()}
+ if(sg>.02){ctx.save();ctx.globalAlpha=Math.min(1,sg*1.4);const pop=1+(1-sg)*.6;ctx.translate(SIGN.cx*R,SIGN.cy*R+Math.sin(t*8)*2*sg);ctx.scale(pop,pop);ctx.translate(-SIGN.cx*R,-SIGN.cy*R);
+  const sc=mx(col,[255,255,255],.28);ctx.strokeStyle=sc;ctx.fillStyle=sc;ctx.lineWidth=SIGN.w*R;ctx.shadowColor=col;ctx.shadowBlur=10;
+  for(const s of SIGN.s){ctx.beginPath();s.forEach((p,i)=>ctx[i?'lineTo':'moveTo'](p[0]*R,p[1]*R));ctx.stroke()}
+  for(const d of SIGN.d){ctx.beginPath();ctx.arc(d[0]*R,d[1]*R,Math.max(d[2]*R,SIGN.w*R*.6),0,6.3);ctx.fill()}
+  ctx.restore()}
+ctx.restore();
+ if(bigV>.02){ctx.save();ctx.globalAlpha=Math.min(1,Math.max(0,(bigV-.3)*1.6));ctx.translate(cx,cy);ctx.fillStyle=dk(.8);ctx.strokeStyle=dk(.8);ctx.textBaseline='middle';const ff='"SF Pro Rounded",ui-rounded,Nunito,system-ui,sans-serif';
+  if(bigKind==='time'){const d=new Date();ctx.textAlign='center';ctx.font='700 112px '+ff;ctx.fillText(String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'),0,6)}
+  else{ctx.lineCap='round';ctx.lineWidth=7;ctx.beginPath();ctx.arc(-96,-62,22,0,6.3);ctx.fill();for(let i=0;i<8;i++){const a=i*.7854;ctx.beginPath();ctx.moveTo(-96+Math.cos(a)*33,-62+Math.sin(a)*33);ctx.lineTo(-96+Math.cos(a)*46,-62+Math.sin(a)*46);ctx.stroke()}
+   ctx.textAlign='right';ctx.font='700 118px '+ff;ctx.fillText(WX.t+'°',160,-24);ctx.font='600 32px '+ff;ctx.fillText('Днём '+WX.d+'°',150,54);ctx.fillText('Ночью '+WX.n+'°',150,94)}
+  ctx.restore()}
+ requestAnimationFrame(frame)}
+requestAnimationFrame(frame);
+function aim(e){touch();const r=cv.getBoundingClientRect(),x=(e.clientX-r.left)/r.width*466-233,y=(e.clientY-r.top)/r.height*466-233,d=Math.hypot(x,y),c=d>109?109/d:1;tx=233+x*c;ty=233+y*c;lookT=[x/233,y/233]}
+cv.addEventListener('pointermove',aim);
+cv.addEventListener('pointerdown',e=>{aim(e);hv=-11;snd(SP[emo][3])});
+
+// === ГОЛОСОВЫЕ КОМАНДЫ (пока базовые, расширим на Шаге 3) ===
+function hear(q){
+  touch();
+  q=q.toLowerCase().trim();
+  toast('«'+q+'»');
+  if(/привет|здравств|здаров|хай/.test(q))return greet();
+  if(/сколько.*врем|который час|врем[яю]/.test(q))return showTime();
+  if(/спокойной ночи|споки|доброй ночи|спать/.test(q))return goodNight();
+  if(/погод/.test(q))return showWeather();
+  if(/дожд/.test(q))return setWx('rain');
+  if(/снег/.test(q))return setWx('snow');
+  if(/солн/.test(q))return setWx('sun');
+  for(const [r,k] of [[/груст|плак/,'sad'],[/радост|весел|ура/,'joy'],[/зл[ао]|сердит/,'angry'],[/удив/,'surprise'],[/люб/,'love'],[/страш|бо[юя]с/,'scared'],[/спокой/,'calm']])
+    if(r.test(q))return setEmo(k);
+  toast('Не понял…');
+}
+
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+const micBtn=$('#mic');
+let recognition=null, listening=false;
+if(SR){
+  recognition=new SR();
+  recognition.lang='ru-RU';
+  recognition.continuous=false;
+  recognition.interimResults=false;
+  recognition.onresult=e=>{
+    const text=e.results[0][0].transcript;
+    stopListening();
+    hear(text);
+  };
+  recognition.onerror=e=>{
+    stopListening();
+    if(e.error==='not-allowed') toast('Дай доступ к микрофону');
+    else if(e.error!=='aborted') toast('Ошибка микрофона');
+  };
+  recognition.onend=()=>stopListening();
+}else{
+  micBtn.style.display='none';
+}
+
+function startListening(){
+  if(!recognition)return;
+  try{
+    recognition.start();
+    listening=true;
+    micBtn.classList.add('listening');
+    toast('Слушаю…');
+  }catch(e){}
+}
+function stopListening(){
+  listening=false;
+  micBtn.classList.remove('listening');
+  try{recognition.abort()}catch(e){}
+}
+micBtn.addEventListener('click',()=>{
+  touch();
+  if(listening) stopListening();
+  else startListening();
+});
+
+// Долгое нажатие на Акуму — тоже запускает микрофон
+let longPressTimer=null;
+cv.addEventListener('pointerdown',e=>{
+  longPressTimer=setTimeout(()=>{
+    if(!listening) startListening();
+  },600);
+});
+cv.addEventListener('pointerup',()=>clearTimeout(longPressTimer));
+cv.addEventListener('pointerleave',()=>clearTimeout(longPressTimer));
+cv.addEventListener('pointermove',e=>{
+  if(e.pressure===0) clearTimeout(longPressTimer);
+});
+</script>
+</body></html>
